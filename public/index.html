@@ -9,7 +9,6 @@
   #app { display: flex; height: 100%; }
   #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   #status { padding: 8px 12px; font-size: 18px; text-align: center; min-height: 24px; }
-  #host { background: #e8a33d; color: #111; text-align: center; padding: 4px; font-size: 14px; font-weight: bold; }
   #wrap { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0; }
   #side { width: 190px; padding: 12px; background: #24272e; overflow-y: auto; }
   #side h2 { font-size: 14px; margin: 0 0 8px; text-transform: uppercase; opacity: .6; }
@@ -30,7 +29,6 @@
 <body>
 <div id="app">
   <div id="main">
-    <div id="host" hidden>👑 Jij bent de host — houd dit tabblad open</div>
     <div id="status"></div>
     <div id="wrap"><canvas id="c"></canvas></div>
   </div>
@@ -48,8 +46,6 @@
     <div id="err"></div>
   </form>
 </div>
-<script src="peerjs.min.js"></script>
-<script src="sim.js"></script>
 <script src="net.js"></script>
 <script src="render.js"></script>
 <script src="game.js"></script>

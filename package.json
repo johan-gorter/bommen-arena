@@ -1,6 +1,12 @@
 {
   "name": "bommen-arena",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "private": true,
-  "scripts": { "start": "node server.js" }
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 3000",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": { "hono": "^4.6.0" },
+  "devDependencies": { "wrangler": "^4.0.0" }
 }

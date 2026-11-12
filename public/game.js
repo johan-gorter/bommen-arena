@@ -1,8 +1,9 @@
-// Client: invoer, UI en de render-loop. Netwerk zit in net.js, spelregels in sim.js.
+// Client: invoer, UI en de render-loop. Netwerk zit in net.js, spelregels op de server (src/sim.js).
 const $ = id => document.getElementById(id);
 const canvas = $('c');
 const pos = new Map(); // pid -> geïnterpoleerde positie
-const SPEED = 1000 / (CFG.TICK_MS * CFG.MOVE_TICKS); // cellen per seconde
+const TICK_MS = 50, MOVE_TICKS = 3; // gelijk aan CFG in src/sim.js
+const SPEED = 1000 / (TICK_MS * MOVE_TICKS); // cellen per seconde
 let joined = false;
 
 $('joinForm').onsubmit = e => {
@@ -13,11 +14,11 @@ $('joinForm').onsubmit = e => {
   net.join($('name').value);
 };
 
-net.hooks.onStatus = text => { $('status').textContent = text; $('host').hidden = true; };
+net.hooks.onStatus = text => { $('status').textContent = text; };
 net.hooks.onFull = () => {
   joined = false;
   $('join').style.display = '';
-  $('err').textContent = 'Het spel zit vol (max 16 spelers).';
+  $('err').textContent = 'Het spel zit vol (max 20 spelers).';
 };
 net.hooks.onState = updateUi;
 
@@ -47,10 +48,9 @@ addEventListener('blur', () => { held.length = 0; net.input(null); });
 
 // ---- UI ----
 function updateUi() {
-  if (!net.role()) return; // tijdens een host-wissel blijft de statusmelding staan
   const myId = net.pid();
   const me = state.players.find(p => p.pid === myId);
-  const secs = Math.ceil(state.timer * CFG.TICK_MS / 1000);
+  const secs = Math.ceil(state.timer * TICK_MS / 1000);
   let s;
   if (state.phase === 'lobby') s = 'Wachten op spelers…';
   else if (state.phase === 'countdown') s = `Ronde begint over ${secs}…`;
@@ -63,7 +63,6 @@ function updateUi() {
       : `${t} · Je wacht tot de volgende ronde begint`;
   }
   $('status').textContent = s;
-  $('host').hidden = net.role() !== 'host';
 
   const list = $('list');
   list.textContent = '';
@@ -73,7 +72,7 @@ function updateUi() {
     const dot = document.createElement('span');
     dot.className = 'dot'; dot.style.background = playerColor(p.slot);
     const n = document.createElement('span');
-    n.className = 'n'; n.textContent = p.name + (p.pid === state.hostPid ? ' 👑' : '');
+    n.className = 'n'; n.textContent = p.name;
     const wins = document.createElement('span');
     wins.textContent = p.wins;
     row.append(dot, n, wins);

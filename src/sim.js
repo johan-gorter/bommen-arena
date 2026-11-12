@@ -1,7 +1,7 @@
-// Spel-logica. Draait alleen bij de host. De hele spelstatus is één JSON-object,
-// zodat een nieuwe host het spel kan overnemen vanaf de laatst ontvangen status.
-const CFG = {
-  MAX_PLAYERS: 16,
+// Spel-logica. Draait op de server (Durable Object). De hele spelstatus is één JSON-object
+// dat elke tick naar alle clients gaat.
+export const CFG = {
+  MAX_PLAYERS: 20,
   TICK_MS: 50,
   MOVE_TICKS: 3,        // ticks per stap (150 ms per cel)
   FUSE_TICKS: 50,       // 2,5 s
@@ -16,13 +16,11 @@ const CFG = {
 };
 
 // Grid-tekens: '#' muur, 'c' krat, ' ' leeg, 'f' vlam-powerup, 'b' bom-powerup
-const DIRS = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
+export const DIRS = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
 const toOdd = v => 2 * Math.round((v - 1) / 2) + 1;
 
-function newGame() {
+export function newGame() {
   return {
-    gameId: Math.random().toString(36).slice(2, 10),
-    hostPid: null,
     phase: 'lobby', // lobby | countdown | playing | ended
     timer: 0, tick: 0, w: 11, h: 9,
     grid: '',       // w*h tekens
@@ -30,11 +28,11 @@ function newGame() {
     flames: [],     // [celindex, tick waarop de vlam dooft]
     winner: null,   // pid, of null bij gelijkspel
     solo: false,
-    players: [],    // volgorde = volgorde van binnenkomst = volgorde van host-opvolging
+    players: [],
   };
 }
 
-function addPlayer(s, pid, name) {
+export function addPlayer(s, pid, name) {
   if (s.players.length >= CFG.MAX_PLAYERS) return null;
   const used = new Set(s.players.map(p => p.slot));
   let slot = 0;
@@ -42,14 +40,14 @@ function addPlayer(s, pid, name) {
   // Nieuwe spelers wachten (alive: false) tot de volgende ronde
   const p = {
     pid, slot, name: String(name || '').trim().slice(0, 12) || 'Speler ' + (slot + 1),
-    x: 0, y: 0, alive: false, wins: 0, conn: true, lostAt: 0,
+    x: 0, y: 0, alive: false, wins: 0,
     dir: null, tap: null, cooldown: 0, range: CFG.START_RANGE, maxBombs: CFG.START_BOMBS, active: 0,
   };
   s.players.push(p);
   return p;
 }
 
-function removePlayer(s, pid) {
+export function removePlayer(s, pid) {
   s.players = s.players.filter(p => p.pid !== pid);
 }
 
@@ -65,14 +63,14 @@ function setFlame(s, k, until) {
   if (f) f[1] = until; else s.flames.push([k, until]);
 }
 
-function setInput(s, pid, dir) {
+export function setInput(s, pid, dir) {
   const p = getPlayer(s, pid);
   if (!p) return;
   p.dir = Object.hasOwn(DIRS, dir) ? dir : null;
   if (p.dir) p.tap = p.dir; // korte toetsaanslag levert altijd één stap op
 }
 
-function placeBomb(s, pid) {
+export function placeBomb(s, pid) {
   const p = getPlayer(s, pid);
   if (!p || s.phase !== 'playing' || !p.alive || p.active >= p.maxBombs) return;
   if (s.bombs.some(b => b.x === p.x && b.y === p.y)) return;
@@ -164,7 +162,7 @@ function explode(s, bomb) {
 }
 
 // Eén tick van het spel
-function step(s) {
+export function step(s) {
   s.tick++;
   if (s.phase === 'lobby') {
     if (s.players.length) startRound(s);

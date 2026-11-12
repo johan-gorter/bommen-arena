@@ -1,6 +1,11 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "game", "runtimeExecutable": "node", "runtimeArgs": ["server.js"], "port": 3000 }
+    {
+      "name": "game",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["node_modules/wrangler/bin/wrangler.js", "dev", "--port", "3000"],
+      "port": 3000
+    }
   ]
 }

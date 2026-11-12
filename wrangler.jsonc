@@ -1,0 +1,8 @@
+{
+  "name": "bommen-arena",
+  "main": "src/index.js",
+  "compatibility_date": "2025-06-01",
+  "assets": { "directory": "public" },
+  "durable_objects": { "bindings": [{ "name": "GAME", "class_name": "Game" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Game"] }]
+}
