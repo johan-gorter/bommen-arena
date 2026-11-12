@@ -9,6 +9,9 @@ export const CFG = {
   COUNTDOWN_TICKS: 60,  // 3 s
   ENDED_TICKS: 80,      // 4 s
   ROUND_TICKS: 3 * 60 * 20, // 3 min, daarna gelijkspel
+  IDLE_TICKS: 100,      // 5 s stilstand van iedereen...
+  IDLE_COUNTDOWN: 100,  // ...start een timer van 5 s naar een nieuwe ronde
+  MAX_QUEUE: 6,         // max. wachtende acties per speler
   CRATE_CHANCE: 0.8,
   POWERUP_CHANCE: 0.3,
   START_RANGE: 2,
@@ -28,6 +31,8 @@ export function newGame() {
     flames: [],     // [celindex, tick waarop de vlam dooft]
     winner: null,   // pid, of null bij gelijkspel
     solo: false,
+    lastMove: 0,    // tick van de laatste stap van wie dan ook
+    idleLeft: null, // ticks tot de nieuwe ronde als iedereen stilstaat, anders null
     players: [],
   };
 }
@@ -41,7 +46,8 @@ export function addPlayer(s, pid, name) {
   const p = {
     pid, slot, name: String(name || '').trim().slice(0, 12) || 'Speler ' + (slot + 1),
     x: 0, y: 0, alive: false, wins: 0,
-    dir: null, tap: null, cooldown: 0, range: CFG.START_RANGE, maxBombs: CFG.START_BOMBS, active: 0,
+    queue: [], seq: 0, ack: 0, cooldown: 0,
+    range: CFG.START_RANGE, maxBombs: CFG.START_BOMBS, active: 0,
   };
   s.players.push(p);
   return p;
@@ -63,18 +69,24 @@ function setFlame(s, k, until) {
   if (f) f[1] = until; else s.flames.push([k, until]);
 }
 
-export function setInput(s, pid, dir) {
+// Acties (stap of bom) komen genummerd binnen en worden in volgorde uitgevoerd. De client
+// voorspelt zijn eigen stappen en ziet aan p.ack welke de server al verwerkt heeft.
+export function queueAction(s, pid, a) {
   const p = getPlayer(s, pid);
-  if (!p) return;
-  p.dir = Object.hasOwn(DIRS, dir) ? dir : null;
-  if (p.dir) p.tap = p.dir; // korte toetsaanslag levert altijd één stap op
+  if (!p || !Number.isInteger(a.seq) || a.seq <= p.seq) return;
+  if (!a.bomb && !Object.hasOwn(DIRS, a.dir)) return;
+  p.seq = a.seq;
+  if (s.phase !== 'playing' || !p.alive || p.queue.length >= CFG.MAX_QUEUE) {
+    p.queue = [];
+    p.ack = a.seq; // geweigerd: de client valt terug op de serverpositie
+    return;
+  }
+  p.queue.push(a.bomb ? { seq: a.seq, bomb: true } : { seq: a.seq, dir: a.dir });
 }
 
-export function placeBomb(s, pid) {
-  const p = getPlayer(s, pid);
-  if (!p || s.phase !== 'playing' || !p.alive || p.active >= p.maxBombs) return;
-  if (s.bombs.some(b => b.x === p.x && b.y === p.y)) return;
-  s.bombs.push({ x: p.x, y: p.y, owner: pid, range: p.range, at: s.tick + CFG.FUSE_TICKS });
+function placeBomb(s, p) {
+  if (p.active >= p.maxBombs || s.bombs.some(b => b.x === p.x && b.y === p.y)) return;
+  s.bombs.push({ x: p.x, y: p.y, owner: p.pid, range: p.range, at: s.tick + CFG.FUSE_TICKS });
   p.active++;
 }
 
@@ -112,7 +124,7 @@ function startRound(s) {
 
   ps.forEach((p, i) => {
     const [x, y] = spawns[i];
-    Object.assign(p, { x, y, alive: true, dir: null, tap: null, cooldown: 0,
+    Object.assign(p, { x, y, alive: true, queue: [], ack: p.seq, cooldown: 0,
       range: CFG.START_RANGE, maxBombs: CFG.START_BOMBS, active: 0 });
     // Het "gat": eigen cel plus boven, onder, links en rechts leeg
     for (const [dx, dy] of [[0, 0], ...Object.values(DIRS)]) {
@@ -123,6 +135,7 @@ function startRound(s) {
   s.bombs = [];
   s.flames = [];
   s.winner = null;
+  s.idleLeft = null;
   s.solo = ps.length === 1;
   s.phase = 'countdown';
   s.timer = CFG.COUNTDOWN_TICKS;
@@ -130,8 +143,10 @@ function startRound(s) {
 
 function endRound(s, winnerPid) {
   s.winner = winnerPid;
+  s.idleLeft = null;
   const p = winnerPid != null && getPlayer(s, winnerPid);
   if (p && !s.solo) p.wins++;
+  for (const q of s.players) { q.queue = []; q.ack = q.seq; }
   s.phase = 'ended';
   s.timer = CFG.ENDED_TICKS;
 }
@@ -161,30 +176,39 @@ function explode(s, bomb) {
   }
 }
 
+// Voer de wachtende acties van één speler uit: bommen meteen, stappen op het ritme van de cooldown
+function runQueue(s, p) {
+  if (p.cooldown > 0) p.cooldown--;
+  while (p.queue.length) {
+    const a = p.queue[0];
+    if (!a.bomb && p.cooldown > 0) break;
+    p.queue.shift();
+    p.ack = a.seq;
+    if (a.bomb) { placeBomb(s, p); continue; }
+    const [dx, dy] = DIRS[a.dir];
+    const x = p.x + dx, y = p.y + dy;
+    const c = cell(s, x, y);
+    if (c === '#' || c === 'c' || s.bombs.some(b => b.x === x && b.y === y)) continue;
+    p.x = x; p.y = y;
+    // Achterstand door netwerkvertraging wordt ingelopen met een iets kortere wachttijd
+    p.cooldown = p.queue.length ? CFG.MOVE_TICKS - 1 : CFG.MOVE_TICKS;
+    s.lastMove = s.tick;
+    if (c === 'f') { p.range++; setCell(s, x, y, ' '); }
+    if (c === 'b') { p.maxBombs++; setCell(s, x, y, ' '); }
+  }
+}
+
 // Eén tick van het spel
 export function step(s) {
   s.tick++;
   if (s.phase === 'lobby') {
     if (s.players.length) startRound(s);
   } else if (s.phase === 'countdown') {
-    if (--s.timer <= 0) { s.phase = 'playing'; s.timer = CFG.ROUND_TICKS; }
+    if (--s.timer <= 0) { s.phase = 'playing'; s.timer = CFG.ROUND_TICKS; s.lastMove = s.tick; }
   } else if (s.phase === 'ended') {
     if (--s.timer <= 0) startRound(s);
   } else if (s.phase === 'playing') {
-    for (const p of s.players) {
-      if (!p.alive) continue;
-      if (p.cooldown > 0) p.cooldown--;
-      const dir = p.dir || p.tap;
-      if (p.cooldown > 0 || !dir) continue;
-      p.tap = null;
-      const [dx, dy] = DIRS[dir];
-      const x = p.x + dx, y = p.y + dy;
-      const c = cell(s, x, y);
-      if (c === '#' || c === 'c' || s.bombs.some(b => b.x === x && b.y === y)) continue;
-      p.x = x; p.y = y; p.cooldown = CFG.MOVE_TICKS;
-      if (c === 'f') { p.range++; setCell(s, x, y, ' '); }
-      if (c === 'b') { p.maxBombs++; setCell(s, x, y, ' '); }
-    }
+    for (const p of s.players) if (p.alive) runQueue(s, p);
     let b;
     while ((b = s.bombs.find(b => b.at <= s.tick))) explode(s, b);
     s.flames = s.flames.filter(f => f[1] > s.tick);
@@ -199,6 +223,12 @@ export function step(s) {
       endRound(s, alive.length ? alive[0].pid : null);
     } else if (s.timer <= 0) {
       endRound(s, null);
+    }
+    // Iedereen staat stil: na 5 s loopt een timer van 5 s, daarna begint een nieuwe ronde
+    if (s.phase === 'playing') {
+      const idle = s.tick - s.lastMove;
+      s.idleLeft = idle >= CFG.IDLE_TICKS ? CFG.IDLE_TICKS + CFG.IDLE_COUNTDOWN - idle : null;
+      if (s.idleLeft !== null && s.idleLeft <= 0) startRound(s);
     }
   }
 }

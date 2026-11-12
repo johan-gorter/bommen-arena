@@ -2,9 +2,10 @@
 // Statische bestanden (public/) worden door Workers Assets geserveerd.
 import { Hono } from 'hono';
 import { DurableObject } from 'cloudflare:workers';
-import { CFG, newGame, addPlayer, removePlayer, setInput, placeBomb, step } from './sim.js';
+import { CFG, newGame, addPlayer, removePlayer, queueAction, step } from './sim.js';
 
-const MAX_SOCKETS = 64; // spelers plus toeschouwers die nog geen naam hebben ingevuld
+const MAX_SOCKETS = 64;   // spelers plus toeschouwers die nog geen naam hebben ingevuld
+const GRACE_MS = 5000;    // zo lang houdt een speler zijn plek na een verbroken verbinding
 
 const app = new Hono();
 
@@ -20,10 +21,16 @@ export default app;
 export class Game extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
+    this.reset();
+    this.interval = null;
+  }
+
+  reset() {
     this.game = newGame();
     this.sockets = new Map(); // WebSocket -> pid (null zolang de speler niet meedoet)
+    this.keys = new Map();    // geheime sleutel van de client -> pid, voor herverbinden
+    this.away = new Map();    // pid -> tijdstip waarop de verbinding wegviel
     this.nextId = 1;
-    this.interval = null;
   }
 
   async fetch() {
@@ -35,7 +42,10 @@ export class Game extends DurableObject {
     server.addEventListener('message', e => this.onMessage(server, e.data));
     server.addEventListener('close', () => this.onClose(server));
     server.addEventListener('error', () => this.onClose(server));
-    if (!this.interval) this.interval = setInterval(() => this.tick(), CFG.TICK_MS);
+    if (!this.interval) {
+      this.nextAt = Date.now() + CFG.TICK_MS;
+      this.interval = setInterval(() => this.tick(), CFG.TICK_MS / 2);
+    }
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -43,34 +53,58 @@ export class Game extends DurableObject {
     if (typeof data !== 'string' || data.length > 200) return;
     let m;
     try { m = JSON.parse(data); } catch { return; }
-    if (!m || typeof m !== 'object') return;
+    if (!m || typeof m !== 'object' || !this.sockets.has(ws)) return;
     const pid = this.sockets.get(ws);
-    if (m.t === 'join' && pid == null) {
-      const p = addPlayer(this.game, this.nextId, m.name);
+    if (m.t === 'join' && pid == null) this.join(ws, m);
+    else if (pid == null) return;
+    else if (m.t === 'move') queueAction(this.game, pid, { seq: m.seq, dir: m.dir });
+    else if (m.t === 'bomb') queueAction(this.game, pid, { seq: m.seq, bomb: true });
+  }
+
+  join(ws, m) {
+    const key = typeof m.key === 'string' ? m.key.slice(0, 40) : '';
+    let p = key && this.game.players.find(q => q.pid === this.keys.get(key));
+    if (p) {
+      // Terug na een netwerkhapering: zelfde speler, oude verbinding loslaten
+      for (const [other, pid] of this.sockets) if (pid === p.pid) this.sockets.set(other, null);
+      this.away.delete(p.pid);
+    } else {
+      p = addPlayer(this.game, this.nextId, m.name);
       if (!p) return ws.send(JSON.stringify({ t: 'full' }));
-      this.sockets.set(ws, this.nextId++);
-      ws.send(JSON.stringify({ t: 'welcome', pid: p.pid }));
-    } else if (pid != null) {
-      if (m.t === 'input') setInput(this.game, pid, m.dir);
-      else if (m.t === 'bomb') placeBomb(this.game, pid);
+      this.nextId++;
+      if (key) this.keys.set(key, p.pid);
     }
+    this.sockets.set(ws, p.pid);
+    ws.send(JSON.stringify({ t: 'welcome', pid: p.pid }));
   }
 
   onClose(ws) {
     if (!this.sockets.has(ws)) return;
     const pid = this.sockets.get(ws);
     this.sockets.delete(ws);
-    if (pid != null) removePlayer(this.game, pid);
     try { ws.close(); } catch {}
-    if (!this.sockets.size) { // niemand meer: stoppen en schoon beginnen
-      clearInterval(this.interval);
-      this.interval = null;
-      this.game = newGame();
-    }
+    if (pid != null) this.away.set(pid, Date.now()); // plek blijft nog even bewaard
   }
 
   tick() {
-    step(this.game);
+    const now = Date.now();
+    for (const [pid, since] of this.away) {
+      if (now - since < GRACE_MS) continue;
+      this.away.delete(pid);
+      removePlayer(this.game, pid);
+      for (const [key, p] of this.keys) if (p === pid) this.keys.delete(key);
+    }
+    if (!this.sockets.size && !this.away.size) { // niemand meer: stoppen en schoon beginnen
+      clearInterval(this.interval);
+      this.interval = null;
+      this.reset();
+      return;
+    }
+    // Op kloktijd lopen: een trage of haperende timer wordt ingehaald met extra stappen
+    let steps = 0;
+    while (now >= this.nextAt && steps < 5) { step(this.game); this.nextAt += CFG.TICK_MS; steps++; }
+    if (steps === 5) this.nextAt = now + CFG.TICK_MS;
+    if (!steps) return;
     const msg = JSON.stringify({ t: 'state', s: this.game });
     for (const ws of [...this.sockets.keys()]) {
       try { ws.send(msg); } catch { this.onClose(ws); }

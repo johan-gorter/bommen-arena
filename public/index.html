@@ -2,15 +2,16 @@
 <html lang="nl">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Bommen Arena</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #1b1d22; color: #eee; font-family: system-ui, sans-serif; overflow: hidden; }
-  #app { display: flex; height: 100%; }
-  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  html, body { margin: 0; height: 100%; background: #1b1d22; color: #eee; font-family: system-ui, sans-serif;
+    overflow: hidden; overscroll-behavior: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  #app { display: flex; height: 100vh; height: 100dvh; }
+  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
   #status { padding: 8px 12px; font-size: 18px; text-align: center; min-height: 24px; }
   #wrap { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0; }
-  #side { width: 190px; padding: 12px; background: #24272e; overflow-y: auto; }
+  #side { width: 190px; padding: 12px; background: #24272e; overflow-y: auto; box-sizing: border-box; }
   #side h2 { font-size: 14px; margin: 0 0 8px; text-transform: uppercase; opacity: .6; }
   .p { display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 14px; }
   .p.out { opacity: .4; }
@@ -18,12 +19,44 @@
   .dot { width: 12px; height: 12px; border-radius: 50%; flex: none; }
   .p .n { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #help { margin-top: 16px; font-size: 12px; opacity: .6; line-height: 1.5; }
-  #join { position: fixed; inset: 0; background: #000a; display: flex; align-items: center; justify-content: center; }
+  #join { position: fixed; inset: 0; background: #000a; display: flex; align-items: center; justify-content: center; z-index: 2; }
   #join form { background: #24272e; padding: 24px; border-radius: 8px; display: flex; flex-direction: column; gap: 12px; width: 240px; }
   #join h1 { margin: 0; font-size: 22px; }
   #join input, #join button { font-size: 16px; padding: 8px; border-radius: 4px; border: 0; }
+  #join input { -webkit-user-select: text; user-select: text; }
   #join button { background: #e8a33d; cursor: pointer; font-weight: bold; }
   #err { color: #f77; font-size: 14px; }
+
+  /* Touch-besturing: alleen op apparaten met een aanraakscherm */
+  #touch { display: none; }
+  #pad, #bombBtn { position: fixed; bottom: calc(20px + env(safe-area-inset-bottom)); border-radius: 50%;
+    background: #ffffff26; border: 2px solid #ffffff55; touch-action: none; z-index: 1; }
+  #pad { left: calc(20px + env(safe-area-inset-left)); width: 140px; height: 140px; }
+  #knob { position: absolute; left: 50%; top: 50%; width: 48px; height: 48px; margin: -24px; border-radius: 50%;
+    background: #ffffff88; pointer-events: none; }
+  #bombBtn { right: calc(24px + env(safe-area-inset-right)); width: 96px; height: 96px; margin-bottom: 22px;
+    font-size: 40px; color: inherit; padding: 0; }
+  #bombBtn:active { background: #ffffff55; }
+
+  @media (pointer: coarse) {
+    #touch { display: block; }
+    #help { display: none; }
+  }
+  /* Smal scherm: spelerslijst als compacte strook bovenaan */
+  @media (max-width: 700px) {
+    #app { flex-direction: column; }
+    #side { order: -1; width: auto; padding: 4px 10px; max-height: 18vh; flex: none; }
+    #side h2, #help { display: none; }
+    #list { display: flex; flex-wrap: wrap; gap: 0 14px; }
+    .p { font-size: 13px; }
+    .p .n { flex: none; max-width: 90px; }
+    #status { font-size: 15px; padding: 4px 8px; }
+  }
+  /* Staand op een telefoon: veld bovenaan, besturing in de ruimte eronder */
+  @media (pointer: coarse) and (orientation: portrait) {
+    #wrap { align-items: flex-start; }
+    #main { padding-bottom: calc(190px + env(safe-area-inset-bottom)); }
+  }
 </style>
 </head>
 <body>
@@ -37,6 +70,10 @@
     <div id="list"></div>
     <div id="help">Pijltjes / WASD: lopen<br>Spatie: bom leggen</div>
   </div>
+</div>
+<div id="touch">
+  <div id="pad"><div id="knob"></div></div>
+  <button id="bombBtn" type="button" aria-label="Bom leggen">💣</button>
 </div>
 <div id="join">
   <form id="joinForm">
